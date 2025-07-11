@@ -1,68 +1,61 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Trophy, Calendar, Clock, Target, TrendingUp, ArrowLeft } from "lucide-react";
+import { Trophy, Calendar, Clock, Target, TrendingUp, ArrowLeft, User, CheckCircle, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
-// 模拟历史记录数据
-const historyData = [
-  {
-    id: 1,
-    date: "2024-01-15",
-    score: 7,
-    total: 8,
-    percentage: 88,
-    duration: 245, // 秒
-    title: "社区育儿专家",
-    topics: ["情绪管理", "阅读习惯", "独立性培养"]
-  },
-  {
-    id: 2,
-    date: "2024-01-12",
-    score: 6,
-    total: 8,
-    percentage: 75,
-    duration: 312,
-    title: "合格的智慧家长",
-    topics: ["沟通技巧", "行为引导", "专注力训练"]
-  },
-  {
-    id: 3,
-    date: "2024-01-10",
-    score: 5,
-    total: 8,
-    percentage: 63,
-    duration: 298,
-    title: "合格的智慧家长",
-    topics: ["分享意识", "表扬方式", "错误处理"]
-  },
-  {
-    id: 4,
-    date: "2024-01-08",
-    score: 4,
-    total: 8,
-    percentage: 50,
-    duration: 365,
-    title: "正在成长的父母",
-    topics: ["情绪控制", "习惯养成", "亲子互动"]
-  },
-  {
-    id: 5,
-    date: "2024-01-05",
-    score: 6,
-    total: 8,
-    percentage: 75,
-    duration: 280,
-    title: "合格的智慧家长",
-    topics: ["正面教育", "时间管理", "创造力培养"]
-  }
-];
+interface QuizResult {
+  id: string;
+  date: string;
+  score: number;
+  total_questions: number;
+  title: string;
+  answers: any;
+}
 
 const History = () => {
   const navigate = useNavigate();
-  const [selectedRecord, setSelectedRecord] = useState<number | null>(null);
+  const { user, isAuthenticated } = useAuth();
+  const { toast } = useToast();
+  const [selectedRecord, setSelectedRecord] = useState<string | null>(null);
+  const [historyData, setHistoryData] = useState<QuizResult[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      fetchQuizHistory();
+    } else {
+      setLoading(false);
+    }
+  }, [isAuthenticated, user]);
+
+  const fetchQuizHistory = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('quiz_results')
+        .select('*')
+        .eq('user_id', user?.id)
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+
+      setHistoryData(data || []);
+    } catch (error: any) {
+      console.error('Error fetching quiz history:', error);
+      toast({
+        title: "获取记录失败",
+        description: "无法加载答题历史记录",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -85,13 +78,73 @@ const History = () => {
     return "text-red-600";
   };
 
-  const averageScore = Math.round(
-    historyData.reduce((sum, record) => sum + record.percentage, 0) / historyData.length
-  );
-
-  const bestScore = Math.max(...historyData.map(record => record.percentage));
   const totalQuizzes = historyData.length;
-  const recentTrend = historyData.slice(0, 3).map(r => r.percentage);
+  const averageScore = totalQuizzes > 0 
+    ? Math.round(historyData.reduce((sum, record) => sum + (record.score / record.total_questions * 100), 0) / totalQuizzes)
+    : 0;
+  const bestScore = totalQuizzes > 0 
+    ? Math.max(...historyData.map(record => Math.round(record.score / record.total_questions * 100)))
+    : 0;
+  const recentTrend = historyData.slice(0, 3).map(r => Math.round(r.score / r.total_questions * 100));
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-background py-8">
+        <div className="container mx-auto px-4 max-w-2xl">
+          <div className="flex items-center gap-4 mb-8">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => navigate("/")}
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+            <h1 className="text-3xl font-bold">答题历史记录</h1>
+          </div>
+
+          <Card className="bg-gradient-card shadow-float border-0 text-center">
+            <CardContent className="p-8">
+              <User className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
+              <h3 className="text-xl font-bold mb-2">请先登录</h3>
+              <p className="text-muted-foreground mb-6">
+                登录后即可查看你的答题历史记录
+              </p>
+              <div className="flex gap-3 justify-center">
+                <Button onClick={() => navigate("/auth")}>
+                  登录/注册
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/")}>
+                  返回首页
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background py-8">
+        <div className="container mx-auto px-4 max-w-6xl">
+          <div className="flex items-center gap-4 mb-8">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => navigate("/")}
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+            <h1 className="text-3xl font-bold">答题历史记录</h1>
+          </div>
+          <div className="text-center">
+            <div className="text-lg text-muted-foreground">加载中...</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background py-8">
@@ -202,64 +255,90 @@ const History = () => {
           </TabsContent>
 
           <TabsContent value="records" className="space-y-6">
-            {/* Records List */}
-            <div className="space-y-4">
-              {historyData.map((record) => (
-                <Card 
-                  key={record.id} 
-                  className="bg-gradient-card shadow-card border-0 hover:shadow-float transition-all cursor-pointer"
-                  onClick={() => setSelectedRecord(selectedRecord === record.id ? null : record.id)}
-                >
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-gradient-primary rounded-full flex items-center justify-center">
-                          <div className={`text-lg font-bold text-primary-foreground`}>
-                            {record.score}
+            {historyData.length === 0 ? (
+              <Card className="bg-gradient-card shadow-card border-0 text-center">
+                <CardContent className="p-8">
+                  <Trophy className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
+                  <h3 className="text-xl font-bold mb-2">还没有答题记录</h3>
+                  <p className="text-muted-foreground mb-6">
+                    完成第一次答题挑战来建立你的学习档案
+                  </p>
+                  <Button onClick={() => navigate("/quiz")}>
+                    开始第一次答题
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                {/* Records List */}
+                <div className="space-y-4">
+                  {historyData.map((record) => {
+                    const percentage = Math.round((record.score / record.total_questions) * 100);
+                    return (
+                      <Card 
+                        key={record.id} 
+                        className="bg-gradient-card shadow-card border-0 hover:shadow-float transition-all cursor-pointer"
+                        onClick={() => setSelectedRecord(selectedRecord === record.id ? null : record.id)}
+                      >
+                        <CardHeader>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 bg-gradient-primary rounded-full flex items-center justify-center">
+                                <div className={`text-lg font-bold text-primary-foreground`}>
+                                  {record.score}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Calendar className="w-4 h-4 text-muted-foreground" />
+                                  <span className="text-sm text-muted-foreground">
+                                    {formatDate(record.date)}
+                                  </span>
+                                </div>
+                                <Badge variant="secondary">{record.title}</Badge>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className={`text-2xl font-bold ${getScoreColor(percentage)}`}>
+                                {percentage}%
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {record.score}/{record.total_questions}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <Calendar className="w-4 h-4 text-muted-foreground" />
-                            <span className="text-sm text-muted-foreground">
-                              {formatDate(record.date)}
-                            </span>
-                            <Clock className="w-4 h-4 text-muted-foreground ml-2" />
-                            <span className="text-sm text-muted-foreground">
-                              {formatTime(record.duration)}
-                            </span>
-                          </div>
-                          <Badge variant="secondary">{record.title}</Badge>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className={`text-2xl font-bold ${getScoreColor(record.percentage)}`}>
-                          {record.percentage}%
-                        </div>
-                        <div className="text-sm text-muted-foreground">
-                          {record.score}/{record.total}
-                        </div>
-                      </div>
-                    </div>
-                  </CardHeader>
+                        </CardHeader>
 
-                  {selectedRecord === record.id && (
-                    <CardContent className="pt-0">
-                      <div className="border-t pt-4">
-                        <h4 className="font-medium mb-2">涉及主题：</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {record.topics.map((topic, index) => (
-                            <Badge key={index} variant="outline" className="text-xs">
-                              {topic}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    </CardContent>
-                  )}
-                </Card>
-              ))}
-            </div>
+                        {selectedRecord === record.id && (
+                          <CardContent className="pt-0">
+                            <div className="border-t pt-4">
+                              <h4 className="font-medium mb-2">答题详情：</h4>
+                              <div className="space-y-2 max-h-60 overflow-y-auto">
+                                {record.answers?.map((answer: any, index: number) => (
+                                  <div key={index} className="text-sm p-3 bg-muted/50 rounded-lg">
+                                    <div className="font-medium mb-1">
+                                      第{index + 1}题: {answer.question}
+                                    </div>
+                                    <div className={`flex items-center gap-2 ${answer.is_correct ? 'text-green-600' : 'text-red-600'}`}>
+                                      {answer.is_correct ? (
+                                        <CheckCircle className="w-4 h-4" />
+                                      ) : (
+                                        <XCircle className="w-4 h-4" />
+                                      )}
+                                      <span>{answer.is_correct ? '正确' : '错误'}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </CardContent>
+                        )}
+                      </Card>
+                    );
+                  })}
+                </div>
+              </>
+            )}
 
             {/* CTA */}
             <Card className="bg-gradient-primary shadow-card border-0 text-center">

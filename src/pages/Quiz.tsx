@@ -3,117 +3,26 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, XCircle, ArrowRight, ArrowLeft, Clock } from "lucide-react";
+import { CheckCircle, XCircle, ArrowRight, ArrowLeft, Clock, AlertCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+import { useQuestions } from "@/hooks/useQuestions";
 
-// 模拟题库数据
-const sampleQuestions = [
-  {
-    id: 1,
-    question: "当孩子发脾气时，最有效的处理方式是什么？",
-    options: [
-      "立即制止并严厉批评",
-      "保持冷静，等孩子情绪稳定后再沟通",
-      "不予理睬，让孩子自己冷静",
-      "立即满足孩子的要求以平息情绪"
-    ],
-    correctAnswer: 1,
-    explanation: "孩子发脾气时，保持冷静并在情绪稳定后沟通是最有效的方式。这样可以教会孩子情绪管理，同时维护亲子关系。"
-  },
-  {
-    id: 2,
-    question: "培养孩子阅读习惯的最佳时期是？",
-    options: [
-      "3-6岁学前期",
-      "6-8岁识字期",
-      "8-12岁小学期",
-      "越早越好，从婴儿期开始"
-    ],
-    correctAnswer: 3,
-    explanation: "阅读习惯的培养应该越早越好。从婴儿期开始接触书籍，可以培养孩子对阅读的兴趣和专注力。"
-  },
-  {
-    id: 3,
-    question: "孩子说谎时，家长应该？",
-    options: [
-      "立即揭穿并严厉惩罚",
-      "假装不知道，避免冲突",
-      "了解说谎原因，引导诚实表达",
-      "警告下次不许说谎"
-    ],
-    correctAnswer: 2,
-    explanation: "了解孩子说谎的原因很重要。通常孩子说谎是因为害怕、想要保护自己或获得认可。引导孩子诚实表达才是根本解决之道。"
-  },
-  {
-    id: 4,
-    question: "表扬孩子时，哪种方式更有效？",
-    options: [
-      "你真聪明！",
-      "你很棒！",
-      "你刚才认真思考的过程很棒！",
-      "你是最好的孩子！"
-    ],
-    correctAnswer: 2,
-    explanation: "具体的过程性表扬比笼统的结果性表扬更有效。这样可以让孩子明确知道什么行为是被认可的，培养成长型思维。"
-  },
-  {
-    id: 5,
-    question: "孩子不愿意分享玩具时，应该？",
-    options: [
-      "强制要求孩子分享",
-      "批评孩子自私",
-      "尊重孩子的所有权意识，引导分享的乐趣",
-      "取走玩具作为惩罚"
-    ],
-    correctAnswer: 2,
-    explanation: "2-3岁的孩子正在建立所有权意识，这是正常发展。应该尊重这个过程，同时通过游戏等方式让孩子体验分享的快乐。"
-  },
-  {
-    id: 6,
-    question: "孩子做错事后，最好的教育方式是？",
-    options: [
-      "立即指出错误并要求道歉",
-      "让孩子承担自然后果，从中学习",
-      "严厉批评以免再犯",
-      "帮孩子解决问题"
-    ],
-    correctAnswer: 1,
-    explanation: "让孩子承担行为的自然后果是最好的学习方式。这样孩子能够真正理解行为与结果的关系，培养责任感。"
-  },
-  {
-    id: 7,
-    question: "培养孩子独立性的关键是？",
-    options: [
-      "越早让孩子独立越好",
-      "根据孩子发展水平逐步放手",
-      "完全不干预孩子的事情",
-      "只在孩子要求时才帮助"
-    ],
-    correctAnswer: 1,
-    explanation: "培养独立性需要根据孩子的发展水平和能力逐步放手。既要给予支持，又要适度挑战，帮助孩子建立自信。"
-  },
-  {
-    id: 8,
-    question: "孩子专注力不足时，最有效的改善方法是？",
-    options: [
-      "增加学习时间",
-      "减少分散注意力的环境因素",
-      "严格要求孩子必须专心",
-      "使用奖励和惩罚制度"
-    ],
-    correctAnswer: 1,
-    explanation: "专注力需要适合的环境支持。减少分散注意力的因素，创造安静整洁的环境，比强制要求更有效。"
-  }
-];
 
 const Quiz = () => {
   const navigate = useNavigate();
+  const { user, isAuthenticated } = useAuth();
+  const { toast } = useToast();
+  const { questions, loading, error } = useQuestions(8);
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<number[]>([]);
   const [showResult, setShowResult] = useState(false);
   const [showExplanation, setShowExplanation] = useState(false);
   const [startTime] = useState(Date.now());
   const [timer, setTimer] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -132,12 +41,15 @@ const Quiz = () => {
     setShowExplanation(true);
   };
 
-  const handleNextQuestion = () => {
-    if (currentQuestion < sampleQuestions.length - 1) {
+  const handleNextQuestion = async () => {
+    if (currentQuestion < questions.length - 1) {
       setCurrentQuestion(currentQuestion + 1);
       setShowExplanation(false);
     } else {
       setShowResult(true);
+      // Save quiz result when quiz is completed
+      const score = calculateScore();
+      await saveQuizResult(score, selectedAnswers);
     }
   };
 
@@ -150,7 +62,7 @@ const Quiz = () => {
 
   const calculateScore = () => {
     return selectedAnswers.reduce((score, answer, index) => {
-      return score + (answer === sampleQuestions[index].correctAnswer ? 1 : 0);
+      return score + (answer === questions[index].correct_answer ? 1 : 0);
     }, 0);
   };
 
@@ -161,15 +73,103 @@ const Quiz = () => {
     return "需要继续学习的家长";
   };
 
+  const saveQuizResult = async (score: number, answers: number[]) => {
+    if (!isAuthenticated || !user) {
+      toast({
+        title: "提示",
+        description: "登录后可保存答题记录",
+      });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const quizData = {
+        user_id: user.id,
+        score,
+        total_questions: questions.length,
+        title: getTitle(score),
+        answers: answers.map((answer, index) => ({
+          question_id: questions[index].id,
+          question: questions[index].title,
+          selected_answer: answer,
+          correct_answer: questions[index].correct_answer,
+          is_correct: answer === questions[index].correct_answer,
+          explanation: questions[index].explanation,
+        })),
+        date: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from('quiz_results')
+        .insert([quizData]);
+
+      if (error) throw error;
+
+      toast({
+        title: "记录已保存",
+        description: "你的答题记录已成功保存",
+      });
+    } catch (error: any) {
+      console.error('Error saving quiz result:', error);
+      toast({
+        title: "保存失败",
+        description: "答题记录保存失败，请稍后重试",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background py-8">
+        <div className="container mx-auto px-4 max-w-3xl">
+          <div className="text-center">
+            <div className="text-lg text-muted-foreground">正在获取题目...</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error || questions.length === 0) {
+    return (
+      <div className="min-h-screen bg-background py-8">
+        <div className="container mx-auto px-4 max-w-2xl">
+          <Card className="bg-gradient-card shadow-float border-0 text-center">
+            <CardContent className="p-8">
+              <AlertCircle className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
+              <h3 className="text-xl font-bold mb-2">暂无题目</h3>
+              <p className="text-muted-foreground mb-6">
+                {error || "暂无题目，请联系管理员录入题目"}
+              </p>
+              <div className="flex gap-3 justify-center">
+                <Button onClick={() => navigate("/")}>
+                  返回首页
+                </Button>
+                <Button variant="outline" onClick={() => window.location.reload()}>
+                  重新加载
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   if (showResult) {
     const score = calculateScore();
-    const percentage = Math.round((score / sampleQuestions.length) * 100);
     
     return (
       <div className="min-h-screen bg-background py-8">
@@ -190,10 +190,10 @@ const Quiz = () => {
             <CardContent className="space-y-6">
               <div className="text-center">
                 <div className="text-6xl font-bold text-primary mb-2">
-                  {score}/{sampleQuestions.length}
+                  {score}/{questions.length}
                 </div>
                 <div className="text-2xl text-muted-foreground mb-4">
-                  正确率 {percentage}%
+                  正确率 {Math.round((score / questions.length) * 100)}%
                 </div>
                 <div className="flex justify-center items-center gap-4 text-muted-foreground">
                   <div className="flex items-center gap-1">
@@ -248,7 +248,7 @@ const Quiz = () => {
     );
   }
 
-  const question = sampleQuestions[currentQuestion];
+  const question = questions[currentQuestion];
   const selectedAnswer = selectedAnswers[currentQuestion];
   const isAnswered = selectedAnswer !== undefined;
 
@@ -264,29 +264,29 @@ const Quiz = () => {
                 <Clock className="w-4 h-4" />
                 {formatTime(timer)}
               </div>
-              <Badge variant="outline">
-                第 {currentQuestion + 1} 题 / 共 {sampleQuestions.length} 题
-              </Badge>
+                <Badge variant="outline">
+                  第 {currentQuestion + 1} 题 / 共 {questions.length} 题
+                </Badge>
             </div>
           </div>
-          <Progress 
-            value={((currentQuestion + 1) / sampleQuestions.length) * 100} 
-            className="h-2"
-          />
+            <Progress 
+              value={((currentQuestion + 1) / questions.length) * 100} 
+              className="h-2"
+            />
         </div>
 
         {/* Question Card */}
-        <Card className="bg-gradient-card shadow-card border-0 mb-6">
-          <CardHeader>
-            <CardTitle className="text-xl leading-relaxed">
-              {question.question}
-            </CardTitle>
-          </CardHeader>
+          <Card className="bg-gradient-card shadow-card border-0 mb-6">
+            <CardHeader>
+              <CardTitle className="text-xl leading-relaxed">
+                {question.title}
+              </CardTitle>
+            </CardHeader>
           
           <CardContent className="space-y-3">
-            {question.options.map((option, index) => {
-              const isSelected = selectedAnswer === index;
-              const isCorrect = index === question.correctAnswer;
+              {question.options.map((option, index) => {
+                const isSelected = selectedAnswer === index;
+                const isCorrect = index === question.correct_answer;
               const isWrong = showExplanation && isSelected && !isCorrect;
               
               return (
@@ -357,7 +357,7 @@ const Quiz = () => {
                 size="lg"
                 className="flex items-center gap-2"
               >
-                {currentQuestion === sampleQuestions.length - 1 ? '查看结果' : '下一题'}
+                {currentQuestion === questions.length - 1 ? '查看结果' : '下一题'}
                 <ArrowRight className="w-4 h-4" />
               </Button>
             )}

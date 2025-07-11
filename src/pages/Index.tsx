@@ -2,18 +2,38 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Trophy, PlayCircle, History, Star, Brain, Heart } from "lucide-react";
+import { Trophy, PlayCircle, History, Star, Brain, Heart, User, LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
 import heroImage from "@/assets/hero-family.jpg";
 
 const Index = () => {
   const navigate = useNavigate();
+  const { user, isAuthenticated, signOut } = useAuth();
+  const { toast } = useToast();
   const [userStats] = useState({
     totalQuizzes: 12,
     averageScore: 85,
     bestScore: 95,
     streak: 5
   });
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      toast({
+        title: "已退出登录",
+        description: "感谢使用，期待你的下次访问！",
+      });
+    } catch (error) {
+      toast({
+        title: "退出失败",
+        description: "请稍后重试",
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -25,6 +45,36 @@ const Index = () => {
           style={{ backgroundImage: `url(${heroImage})` }}
         />
         <div className="container mx-auto px-4 py-16 relative z-10">
+          {/* User Status */}
+          <div className="flex justify-end mb-4">
+            {isAuthenticated ? (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <User className="w-4 h-4" />
+                  <span>{user?.user_metadata?.display_name || user?.email}</span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSignOut}
+                  className="flex items-center gap-1"
+                >
+                  <LogOut className="w-4 h-4" />
+                  退出
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => navigate("/auth")}
+                className="flex items-center gap-2"
+              >
+                <User className="w-4 h-4" />
+                登录/注册
+              </Button>
+            )}
+          </div>
+
           <div className="text-center max-w-4xl mx-auto">
             <div className="flex justify-center mb-6">
               <div className="relative">
@@ -65,6 +115,16 @@ const Index = () => {
                 <History className="w-5 h-5" />
                 查看答题记录
               </Button>
+              
+              {isAuthenticated && (
+                <Button 
+                  variant="outline" 
+                  size="lg"
+                  onClick={() => navigate("/admin")}
+                >
+                  管理后台
+                </Button>
+              )}
             </div>
 
             {/* Stats Cards */}
