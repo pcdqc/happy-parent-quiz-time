@@ -101,7 +101,7 @@ const Admin = () => {
       if (error) throw error;
       setQuestions((data || []).map(q => ({
         ...q,
-        options: Array.isArray(q.options) ? q.options : []
+        options: Array.isArray(q.options) ? q.options.map(String) : []
       })));
     } catch (error: any) {
       console.error('Error fetching questions:', error);
