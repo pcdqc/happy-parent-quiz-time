@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Trophy, Calendar, Clock, Target, TrendingUp, ArrowLeft, User, CheckCircle, XCircle } from "lucide-react";
+import { Trophy, Calendar, Clock, Target, TrendingUp, ArrowLeft, User, CheckCircle, XCircle, Share2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
