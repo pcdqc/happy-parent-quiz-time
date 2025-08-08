@@ -19,7 +19,10 @@ import {
   ArrowLeft,
   AlertCircle,
   CheckCircle,
-  Loader2
+  Loader2,
+  Upload,
+  Eye,
+  EyeOff
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -57,6 +60,9 @@ const Admin = () => {
     count: 5,
     style: "亲子教育"
   });
+  const [generatedQuestions, setGeneratedQuestions] = useState<any[]>([]);
+  const [editingGeneratedQuestion, setEditingGeneratedQuestion] = useState<any>(null);
+  const [selectedQuestions, setSelectedQuestions] = useState<Set<number>>(new Set());
   
   // Analytics state
   const [analyticsData, setAnalyticsData] = useState<any>(null);
@@ -286,31 +292,18 @@ const Admin = () => {
         throw new Error(data.error || 'AI生成失败');
       }
 
-      // 批量添加生成的题目到数据库
-      const questionsToInsert = data.questions.map((q: any) => ({
+      // 将生成的题目添加到预览列表，而不是直接入库
+      setGeneratedQuestions(data.questions.map((q: any, index: number) => ({
         ...q,
+        tempId: index,
         created_by: user?.id
-      }));
-
-      const { error: insertError } = await supabase
-        .from('questions')
-        .insert(questionsToInsert);
-
-      if (insertError) throw insertError;
+      })));
+      setSelectedQuestions(new Set(data.questions.map((_: any, index: number) => index)));
 
       toast({
         title: "AI生成成功",
-        description: `成功生成并添加了 ${data.questions.length} 道题目`,
+        description: `成功生成了 ${data.questions.length} 道题目，请检查后选择入库`,
       });
-
-      // 重置表单并刷新题目列表
-      setAiFormData({
-        topic: "",
-        difficulty: "medium",
-        count: 5,
-        style: "亲子教育"
-      });
-      fetchQuestions();
 
     } catch (error: any) {
       console.error('AI generation error:', error);
@@ -321,6 +314,113 @@ const Admin = () => {
       });
     } finally {
       setAiGenerating(false);
+    }
+  };
+
+  const handleEditGeneratedQuestion = (question: any) => {
+    setEditingGeneratedQuestion(question);
+  };
+
+  const handleSaveGeneratedQuestion = (updatedQuestion: any) => {
+    setGeneratedQuestions(prev => 
+      prev.map(q => q.tempId === updatedQuestion.tempId ? updatedQuestion : q)
+    );
+    setEditingGeneratedQuestion(null);
+    toast({
+      title: "题目已更新",
+      description: "题目修改已保存到预览列表",
+    });
+  };
+
+  const handleToggleQuestionSelection = (tempId: number) => {
+    setSelectedQuestions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(tempId)) {
+        newSet.delete(tempId);
+      } else {
+        newSet.add(tempId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleBatchInsert = async () => {
+    const questionsToInsert = generatedQuestions
+      .filter(q => selectedQuestions.has(q.tempId))
+      .map(({ tempId, ...q }) => q);
+
+    if (questionsToInsert.length === 0) {
+      toast({
+        title: "请选择题目",
+        description: "请至少选择一道题目进行入库",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('questions')
+        .insert(questionsToInsert);
+
+      if (error) throw error;
+
+      toast({
+        title: "入库成功",
+        description: `成功添加了 ${questionsToInsert.length} 道题目`,
+      });
+
+      // 清空生成的题目列表
+      setGeneratedQuestions([]);
+      setSelectedQuestions(new Set());
+      setAiFormData({
+        topic: "",
+        difficulty: "medium",
+        count: 5,
+        style: "亲子教育"
+      });
+      fetchQuestions();
+
+    } catch (error: any) {
+      console.error('Batch insert error:', error);
+      toast({
+        title: "入库失败",
+        description: error.message || "批量入库过程中出现错误",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSingleInsert = async (question: any) => {
+    try {
+      const { tempId, ...questionToInsert } = question;
+      const { error } = await supabase
+        .from('questions')
+        .insert([questionToInsert]);
+
+      if (error) throw error;
+
+      toast({
+        title: "入库成功",
+        description: "题目已成功添加",
+      });
+
+      // 从生成列表中移除这道题目
+      setGeneratedQuestions(prev => prev.filter(q => q.tempId !== tempId));
+      setSelectedQuestions(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(tempId);
+        return newSet;
+      });
+      fetchQuestions();
+
+    } catch (error: any) {
+      console.error('Single insert error:', error);
+      toast({
+        title: "入库失败",
+        description: error.message || "题目入库失败",
+        variant: "destructive",
+      });
     }
   };
 
@@ -828,12 +928,303 @@ const Admin = () => {
                 <Alert>
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>
-                    AI将根据您的设置生成高质量的亲子教育题目，生成的题目会自动添加到题库中。
+                    AI将根据您的设置生成高质量的亲子教育题目，生成后您可以预览、编辑并选择性入库。
                     请确保网络连接稳定，生成过程可能需要30-60秒。
                   </AlertDescription>
                 </Alert>
               </CardContent>
             </Card>
+
+            {/* Generated Questions Preview */}
+            {generatedQuestions.length > 0 && (
+              <Card className="bg-gradient-card shadow-card border-0">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2">
+                      <Eye className="w-5 h-5" />
+                      生成的题目预览 ({generatedQuestions.length})
+                    </CardTitle>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">
+                        已选择 {selectedQuestions.size} 道题目
+                      </span>
+                      <Button 
+                        onClick={handleBatchInsert}
+                        disabled={selectedQuestions.size === 0}
+                        size="sm"
+                      >
+                        <Upload className="w-4 h-4 mr-2" />
+                        批量入库 ({selectedQuestions.size})
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {generatedQuestions.map((question, index) => (
+                    <Card key={question.tempId} className="border relative">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <input
+                                type="checkbox"
+                                checked={selectedQuestions.has(question.tempId)}
+                                onChange={() => handleToggleQuestionSelection(question.tempId)}
+                                className="w-4 h-4 rounded border-gray-300"
+                              />
+                              <span className="text-sm text-muted-foreground">题目 {index + 1}</span>
+                              <Badge variant="outline">{question.topic}</Badge>
+                              <Badge variant="secondary">{question.difficulty}</Badge>
+                            </div>
+                            <CardTitle className="text-base">{question.title}</CardTitle>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleEditGeneratedQuestion(question)}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleSingleInsert(question)}
+                            >
+                              <Upload className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {question.options.map((option: string, optIndex: number) => (
+                              <div key={optIndex} className="flex items-center gap-2">
+                                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold ${
+                                  optIndex === question.correct_answer 
+                                    ? 'bg-green-100 text-green-700 border-2 border-green-300' 
+                                    : 'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {String.fromCharCode(65 + optIndex)}
+                                </span>
+                                <span className={`text-sm ${optIndex === question.correct_answer ? 'font-medium text-green-700' : ''}`}>
+                                  {option}
+                                </span>
+                                {optIndex === question.correct_answer && (
+                                  <CheckCircle className="w-4 h-4 text-green-600" />
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="border-t pt-3">
+                            <div className="text-sm">
+                              <span className="font-medium text-muted-foreground">解析：</span>
+                              <span className="text-muted-foreground">{question.explanation}</span>
+                            </div>
+                            <div className="text-sm mt-1">
+                              <span className="font-medium text-muted-foreground">来源：</span>
+                              <span className="text-muted-foreground">{question.source}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                  
+                  <div className="flex items-center justify-between pt-4 border-t">
+                    <div className="flex items-center gap-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (selectedQuestions.size === generatedQuestions.length) {
+                            setSelectedQuestions(new Set());
+                          } else {
+                            setSelectedQuestions(new Set(generatedQuestions.map(q => q.tempId)));
+                          }
+                        }}
+                      >
+                        {selectedQuestions.size === generatedQuestions.length ? (
+                          <>
+                            <EyeOff className="w-4 h-4 mr-2" />
+                            取消全选
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="w-4 h-4 mr-2" />
+                            全选
+                          </>
+                        )}
+                      </Button>
+                      <span className="text-sm text-muted-foreground">
+                        共 {generatedQuestions.length} 道题目，已选择 {selectedQuestions.size} 道
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setGeneratedQuestions([]);
+                          setSelectedQuestions(new Set());
+                        }}
+                      >
+                        清空列表
+                      </Button>
+                      <Button 
+                        onClick={handleBatchInsert}
+                        disabled={selectedQuestions.size === 0}
+                      >
+                        <Upload className="w-4 h-4 mr-2" />
+                        批量入库 ({selectedQuestions.size})
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Edit Generated Question Modal */}
+            {editingGeneratedQuestion && (
+              <Card className="bg-gradient-card shadow-card border-0">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Edit className="w-5 h-5" />
+                    编辑生成的题目
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-title">题目内容</Label>
+                    <Textarea
+                      id="edit-title"
+                      value={editingGeneratedQuestion.title}
+                      onChange={(e) => setEditingGeneratedQuestion({
+                        ...editingGeneratedQuestion,
+                        title: e.target.value
+                      })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>选项</Label>
+                    {editingGeneratedQuestion.options.map((option: string, index: number) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                          index === editingGeneratedQuestion.correct_answer 
+                            ? 'bg-green-100 text-green-700' 
+                            : 'bg-primary text-primary-foreground'
+                        }`}>
+                          {String.fromCharCode(65 + index)}
+                        </span>
+                        <Input
+                          value={option}
+                          onChange={(e) => {
+                            const newOptions = [...editingGeneratedQuestion.options];
+                            newOptions[index] = e.target.value;
+                            setEditingGeneratedQuestion({
+                              ...editingGeneratedQuestion,
+                              options: newOptions
+                            });
+                          }}
+                        />
+                        {index === editingGeneratedQuestion.correct_answer && (
+                          <CheckCircle className="w-5 h-5 text-green-600" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>正确答案</Label>
+                    <Select
+                      value={editingGeneratedQuestion.correct_answer.toString()}
+                      onValueChange={(value) => setEditingGeneratedQuestion({
+                        ...editingGeneratedQuestion,
+                        correct_answer: parseInt(value)
+                      })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {editingGeneratedQuestion.options.map((option: string, index: number) => (
+                          <SelectItem key={index} value={index.toString()}>
+                            选项 {String.fromCharCode(65 + index)}: {option.slice(0, 30)}...
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-topic">主题</Label>
+                      <Input
+                        id="edit-topic"
+                        value={editingGeneratedQuestion.topic}
+                        onChange={(e) => setEditingGeneratedQuestion({
+                          ...editingGeneratedQuestion,
+                          topic: e.target.value
+                        })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>难度</Label>
+                      <Select
+                        value={editingGeneratedQuestion.difficulty}
+                        onValueChange={(value) => setEditingGeneratedQuestion({
+                          ...editingGeneratedQuestion,
+                          difficulty: value
+                        })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="easy">简单</SelectItem>
+                          <SelectItem value="medium">中等</SelectItem>
+                          <SelectItem value="hard">困难</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-source">来源</Label>
+                    <Input
+                      id="edit-source"
+                      value={editingGeneratedQuestion.source}
+                      onChange={(e) => setEditingGeneratedQuestion({
+                        ...editingGeneratedQuestion,
+                        source: e.target.value
+                      })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-explanation">题目解析</Label>
+                    <Textarea
+                      id="edit-explanation"
+                      value={editingGeneratedQuestion.explanation}
+                      onChange={(e) => setEditingGeneratedQuestion({
+                        ...editingGeneratedQuestion,
+                        explanation: e.target.value
+                      })}
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <Button onClick={() => handleSaveGeneratedQuestion(editingGeneratedQuestion)}>
+                      保存修改
+                    </Button>
+                    <Button variant="outline" onClick={() => setEditingGeneratedQuestion(null)}>
+                      取消
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           <TabsContent value="analytics" className="space-y-6">
