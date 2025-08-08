@@ -16,6 +16,7 @@ interface QuizResult {
   total_questions: number;
   title: string;
   answers: any;
+  shareable_name?: string | null;
 }
 
 const History = () => {
@@ -55,6 +56,72 @@ const History = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const generateSlug = () => {
+    const base = Math.random().toString(36).slice(2, 8);
+    const ts = Date.now().toString(36).slice(-4);
+    return `${base}${ts}`;
+  };
+
+  const enableShare = async (record: QuizResult) => {
+    if (!record) return;
+    const slug = generateSlug();
+    const { error } = await supabase
+      .from('quiz_results')
+      .update({ shareable_name: slug })
+      .eq('id', record.id);
+
+    if (error) {
+      console.error('enable share error:', error);
+      toast({
+        title: "开启分享失败",
+        description: "请稍后重试",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setHistoryData(prev => prev.map(r => r.id === record.id ? { ...r, shareable_name: slug } : r));
+    const url = `${window.location.origin}/share/${slug}`;
+    await navigator.clipboard.writeText(url);
+    toast({
+      title: "已开启分享并复制链接",
+      description: url,
+    });
+  };
+
+  const copyShare = async (record: QuizResult) => {
+    if (!record.shareable_name) return;
+    const url = `${window.location.origin}/share/${record.shareable_name}`;
+    await navigator.clipboard.writeText(url);
+    toast({
+      title: "链接已复制",
+      description: url,
+    });
+  };
+
+  const disableShare = async (record: QuizResult) => {
+    const { error } = await supabase
+      .from('quiz_results')
+      .update({ shareable_name: null })
+      .eq('id', record.id);
+
+    if (error) {
+      console.error('disable share error:', error);
+      toast({
+        title: "关闭分享失败",
+        description: "请稍后重试",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setHistoryData(prev => prev.map(r => r.id === record.id ? { ...r, shareable_name: null } : r));
+    toast({
+      title: "已关闭分享",
+      description: "该记录已不再对外可见",
+    });
   };
 
   const formatTime = (seconds: number) => {
@@ -311,24 +378,63 @@ const History = () => {
 
                         {selectedRecord === record.id && (
                           <CardContent className="pt-0">
-                            <div className="border-t pt-4">
-                              <h4 className="font-medium mb-2">答题详情：</h4>
-                              <div className="space-y-2 max-h-60 overflow-y-auto">
-                                {record.answers?.map((answer: any, index: number) => (
-                                  <div key={index} className="text-sm p-3 bg-muted/50 rounded-lg">
-                                    <div className="font-medium mb-1">
-                                      第{index + 1}题: {answer.question}
+                            <div className="border-t pt-4 space-y-4">
+                              <div className="flex flex-wrap gap-2">
+                                {!record.shareable_name ? (
+                                  <Button
+                                    variant="outline"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      enableShare(record);
+                                    }}
+                                  >
+                                    <Share2 className="w-4 h-4 mr-2" />
+                                    开启分享并复制链接
+                                  </Button>
+                                ) : (
+                                  <>
+                                    <Button
+                                      variant="outline"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        copyShare(record);
+                                      }}
+                                    >
+                                      <Share2 className="w-4 h-4 mr-2" />
+                                      复制分享链接
+                                    </Button>
+                                    <Button
+                                      variant="destructive"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        disableShare(record);
+                                      }}
+                                    >
+                                      关闭分享
+                                    </Button>
+                                  </>
+                                )}
+                              </div>
+
+                              <div>
+                                <h4 className="font-medium mb-2">答题详情：</h4>
+                                <div className="space-y-2 max-h-60 overflow-y-auto">
+                                  {record.answers?.map((answer: any, index: number) => (
+                                    <div key={index} className="text-sm p-3 bg-muted/50 rounded-lg">
+                                      <div className="font-medium mb-1">
+                                        第{index + 1}题: {answer.question}
+                                      </div>
+                                      <div className={`flex items-center gap-2 ${answer.is_correct ? 'text-green-600' : 'text-red-600'}`}>
+                                        {answer.is_correct ? (
+                                          <CheckCircle className="w-4 h-4" />
+                                        ) : (
+                                          <XCircle className="w-4 h-4" />
+                                        )}
+                                        <span>{answer.is_correct ? '正确' : '错误'}</span>
+                                      </div>
                                     </div>
-                                    <div className={`flex items-center gap-2 ${answer.is_correct ? 'text-green-600' : 'text-red-600'}`}>
-                                      {answer.is_correct ? (
-                                        <CheckCircle className="w-4 h-4" />
-                                      ) : (
-                                        <XCircle className="w-4 h-4" />
-                                      )}
-                                      <span>{answer.is_correct ? '正确' : '错误'}</span>
-                                    </div>
-                                  </div>
-                                ))}
+                                  ))}
+                                </div>
                               </div>
                             </div>
                           </CardContent>

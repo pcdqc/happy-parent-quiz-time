@@ -34,6 +34,8 @@ interface SharedResult {
     is_correct: boolean;
     explanation: string;
   }[];
+  likes_count?: number;
+  views_count?: number;
 }
 
 const Share = () => {
@@ -43,6 +45,7 @@ const Share = () => {
   const [result, setResult] = useState<SharedResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [likeCount, setLikeCount] = useState(0);
+  const [viewsCount, setViewsCount] = useState(0);
   const [hasLiked, setHasLiked] = useState(false);
 
   useEffect(() => {
@@ -69,7 +72,7 @@ const Share = () => {
         return;
       }
 
-      setResult({
+      const mapped = {
         ...data,
         answers: Array.isArray(data.answers) ? data.answers.map((ans: any) => ({
           question: ans.question || '',
@@ -77,8 +80,18 @@ const Share = () => {
           correct_answer: ans.correct_answer || 0,
           is_correct: ans.is_correct || false,
           explanation: ans.explanation || ''
-        })) : []
-      });
+        })) : [],
+        likes_count: data.likes_count ?? 0,
+        views_count: data.views_count ?? 0,
+      } as SharedResult;
+
+      setResult(mapped);
+      setLikeCount(mapped.likes_count || 0);
+      setViewsCount(mapped.views_count || 0);
+
+      // 初始化本地点赞状态
+      const likedKey = `share_liked_${shareId}`;
+      setHasLiked(localStorage.getItem(likedKey) === '1');
     } catch (error) {
       console.error('Error:', error);
       toast({
@@ -91,15 +104,38 @@ const Share = () => {
     }
   };
 
-  const handleLike = () => {
-    if (!hasLiked) {
-      setLikeCount(prev => prev + 1);
-      setHasLiked(true);
-      toast({
-        title: "已点赞",
-        description: "感谢你的支持！",
-      });
+  // 浏览量上报（同一浏览器仅一次）
+  useEffect(() => {
+    const viewedKey = `share_viewed_${shareId}`;
+    if (shareId && result && !localStorage.getItem(viewedKey)) {
+      supabase.rpc('increment_share_metric', { p_shareable_name: shareId, p_metric: 'view' })
+        .then(({ error }) => {
+          if (error) {
+            console.error('increment view error:', error);
+            return;
+          }
+          localStorage.setItem(viewedKey, '1');
+          setViewsCount((v) => v + 1);
+        });
     }
+  }, [shareId, result]);
+
+  const handleLike = () => {
+    if (!shareId || hasLiked) return;
+    supabase.rpc('increment_share_metric', { p_shareable_name: shareId, p_metric: 'like' })
+      .then(({ error }) => {
+        if (error) {
+          console.error('increment like error:', error);
+          return;
+        }
+        setLikeCount(prev => prev + 1);
+        setHasLiked(true);
+        localStorage.setItem(`share_liked_${shareId}`, '1');
+        toast({
+          title: "已点赞",
+          description: "感谢你的支持！",
+        });
+      });
   };
 
   const handleShare = async () => {
@@ -292,10 +328,10 @@ const Share = () => {
                 </div>
               </div>
 
-              <div className="text-center mb-6">
-                <Badge variant={scoreBadge.variant} className="text-lg py-2 px-4">
-                  {scoreBadge.text}
-                </Badge>
+              <div className="text-center mb-2">
+                <div className="text-sm text-muted-foreground">
+                  浏览 {viewsCount} 次 · 获得 {likeCount} 个点赞
+                </div>
               </div>
 
               <div className="flex flex-wrap justify-center gap-4">
@@ -361,7 +397,6 @@ const Share = () => {
             </CardContent>
           </Card>
 
-          {/* 鼓励信息 */}
           <Card className="shadow-lg border-0 bg-gradient-to-r from-green-50 to-blue-50">
             <CardContent className="pt-6 text-center">
               <Trophy className="h-12 w-12 text-amber-500 mx-auto mb-4" />

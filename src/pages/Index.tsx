@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +7,9 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import heroImage from "@/assets/hero-family.jpg";
+import { supabase } from "@/integrations/supabase/client";
+import AnnouncementBanner, { Announcement } from "@/components/AnnouncementBanner";
+import ReferenceBookCard, { ReferenceBook } from "@/components/ReferenceBookCard";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -18,6 +21,40 @@ const Index = () => {
     bestScore: 95,
     streak: 5
   });
+
+  // 新增：运营公告 & 推荐参考书籍
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [books, setBooks] = useState<ReferenceBook[]>([]);
+
+  useEffect(() => {
+    // 有效公告（RLS 已限制仅返回有效）
+    supabase
+      .from('announcements')
+      .select('*')
+      .order('starts_at', { ascending: false })
+      .limit(3)
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('fetch announcements error:', error);
+          return;
+        }
+        setAnnouncements((data || []) as any);
+      });
+
+    // 推荐参考书籍（is_active=true，由 RLS 控制）
+    supabase
+      .from('reference_books')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(6)
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('fetch books error:', error);
+          return;
+        }
+        setBooks((data || []) as any);
+      });
+  }, []);
 
   const handleSignOut = async () => {
     try {
@@ -74,6 +111,15 @@ const Index = () => {
               </Button>
             )}
           </div>
+
+          {/* 新增：运营公告横幅（最多3条） */}
+          {announcements.length > 0 && (
+            <div className="mb-6 space-y-3">
+              {announcements.map((a) => (
+                <AnnouncementBanner key={a.id} announcement={a} />
+              ))}
+            </div>
+          )}
 
           <div className="text-center max-w-4xl mx-auto">
             <div className="flex justify-center mb-6">
@@ -203,6 +249,18 @@ const Index = () => {
           </Card>
         </div>
       </div>
+
+      {/* 新增：推荐参考书籍 */}
+      {books.length > 0 && (
+        <div className="container mx-auto px-4 pb-16">
+          <h2 className="text-3xl font-bold text-center mb-12">推荐参考书籍</h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {books.map((b) => (
+              <ReferenceBookCard key={b.id} book={b} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* CTA Section */}
       <div className="bg-gradient-accent py-16">
