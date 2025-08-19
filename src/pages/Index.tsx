@@ -1,39 +1,67 @@
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Trophy, PlayCircle, History, Star, Brain, Heart, User, LogOut } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/hooks/useAuth";
-import { useToast } from "@/hooks/use-toast";
-import heroImage from "@/assets/hero-family.jpg";
-import { supabase } from "@/integrations/supabase/client";
-import AnnouncementBanner, { Announcement } from "@/components/AnnouncementBanner";
-import ReferenceBookCard, { ReferenceBook } from "@/components/ReferenceBookCard";
+import {useState, useEffect} from 'react';
+import {Button} from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from '@/components/ui/card';
+import {Badge} from '@/components/ui/badge';
+import {
+  Trophy,
+  PlayCircle,
+  History,
+  Star,
+  Brain,
+  Heart,
+  User,
+  LogOut
+} from 'lucide-react';
+import {useNavigate} from 'react-router-dom';
+import {useAuth} from '@/hooks/useAuth';
+import {useToast} from '@/hooks/use-toast';
+import heroImage from '@/assets/hero-family.jpg';
+import {supabase} from '@/integrations/supabase/client';
+import AnnouncementBanner, {
+  Announcement
+} from '@/components/AnnouncementBanner';
+import ReferenceBookCard, {ReferenceBook} from '@/components/ReferenceBookCard';
 
 const Index = () => {
   const navigate = useNavigate();
-  const { user, isAuthenticated, signOut } = useAuth();
-  const { toast } = useToast();
-  const [userStats] = useState({
-    totalQuizzes: 12,
-    averageScore: 85,
-    bestScore: 95,
-    streak: 5
+  const {user, isAuthenticated, signOut} = useAuth();
+  const {toast} = useToast();
+  const [userStats, setUserStats] = useState({
+    totalQuizzes: 0,
+    averageScore: 0,
+    bestScore: 0,
+    streak: 0,
+    loading: true
   });
 
   // 新增：运营公告 & 推荐参考书籍
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [books, setBooks] = useState<ReferenceBook[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
+    // 获取用户统计数据（如果已登录）
+    if (isAuthenticated && user) {
+      fetchUserStats();
+      checkAdminStatus();
+    } else {
+      setUserStats(prev => ({...prev, loading: false}));
+      setIsAdmin(false);
+    }
+
     // 有效公告（RLS 已限制仅返回有效）
     supabase
       .from('announcements')
       .select('*')
-      .order('starts_at', { ascending: false })
+      .order('starts_at', {ascending: false})
       .limit(3)
-      .then(({ data, error }) => {
+      .then(({data, error}) => {
         if (error) {
           console.error('fetch announcements error:', error);
           return;
@@ -45,29 +73,106 @@ const Index = () => {
     supabase
       .from('reference_books')
       .select('*')
-      .order('created_at', { ascending: false })
+      .order('created_at', {ascending: false})
       .limit(6)
-      .then(({ data, error }) => {
+      .then(({data, error}) => {
         if (error) {
-          console.error('fetch books error:', error);
+          console.error('fetch books error', error);
           return;
         }
         setBooks((data || []) as any);
       });
-  }, []);
+  }, [isAuthenticated, user]);
+
+  const checkAdminStatus = async () => {
+    if (!user) return;
+
+    try {
+      const {data, error} = await supabase.rpc('is_admin');
+      if (error) throw error;
+      setIsAdmin(data || false);
+    } catch (error) {
+      console.error('检查管理员状态失败:', error);
+      setIsAdmin(false);
+    }
+  };
+
+  const fetchUserStats = async () => {
+    if (!user) return;
+
+    try {
+      const {data, error} = await supabase
+        .from('quiz_results')
+        .select('score, total_questions, date')
+        .eq('user_id', user.id)
+        .order('date', {ascending: false});
+
+      if (error) throw error;
+
+      const results = data || [];
+      const totalQuizzes = results.length;
+
+      if (totalQuizzes === 0) {
+        setUserStats({
+          totalQuizzes: 0,
+          averageScore: 0,
+          bestScore: 0,
+          streak: 0,
+          loading: false
+        });
+        return;
+      }
+
+      const percentages = results.map(r =>
+        Math.round((r.score / r.total_questions) * 100)
+      );
+      const averageScore = Math.round(
+        percentages.reduce((sum, score) => sum + score, 0) / totalQuizzes
+      );
+      const bestScore = Math.max(...percentages);
+
+      // 计算连续答题天数
+      let streak = 0;
+      const today = new Date();
+      const dates = results.map(r => new Date(r.date).toDateString());
+
+      for (let i = 0; i < 365; i++) {
+        const checkDate = new Date(today);
+        checkDate.setDate(today.getDate() - i);
+        const dateString = checkDate.toDateString();
+
+        if (dates.includes(dateString)) {
+          streak++;
+        } else if (i > 0) {
+          break;
+        }
+      }
+
+      setUserStats({
+        totalQuizzes,
+        averageScore,
+        bestScore,
+        streak,
+        loading: false
+      });
+    } catch (error: any) {
+      console.error('获取用户统计数据失败:', error);
+      setUserStats(prev => ({...prev, loading: false}));
+    }
+  };
 
   const handleSignOut = async () => {
     try {
       await signOut();
       toast({
-        title: "已退出登录",
-        description: "感谢使用，期待你的下次访问！",
+        title: '已退出登录',
+        description: '感谢使用，期待你的下次访问！'
       });
     } catch (error) {
       toast({
-        title: "退出失败",
-        description: "请稍后重试",
-        variant: "destructive",
+        title: '退出失败',
+        description: '请稍后重试',
+        variant: 'destructive'
       });
     }
   };
@@ -77,9 +182,9 @@ const Index = () => {
       {/* Hero Section */}
       <div className="relative overflow-hidden bg-gradient-card">
         {/* Background Image */}
-        <div 
+        <div
           className="absolute inset-0 opacity-10 bg-cover bg-center bg-no-repeat"
-          style={{ backgroundImage: `url(${heroImage})` }}
+          style={{backgroundImage: `url(${heroImage})`}}
         />
         <div className="container mx-auto px-4 py-16 relative z-10">
           {/* User Status */}
@@ -88,7 +193,9 @@ const Index = () => {
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <User className="w-4 h-4" />
-                  <span>{user?.user_metadata?.display_name || user?.email}</span>
+                  <span>
+                    {user?.user_metadata?.display_name || user?.email}
+                  </span>
                 </div>
                 <Button
                   variant="outline"
@@ -103,7 +210,7 @@ const Index = () => {
             ) : (
               <Button
                 variant="outline"
-                onClick={() => navigate("/auth")}
+                onClick={() => navigate('/auth')}
                 className="flex items-center gap-2"
               >
                 <User className="w-4 h-4" />
@@ -115,7 +222,7 @@ const Index = () => {
           {/* 新增：运营公告横幅（最多3条） */}
           {announcements.length > 0 && (
             <div className="mb-6 space-y-3">
-              {announcements.map((a) => (
+              {announcements.map(a => (
                 <AnnouncementBanner key={a.id} announcement={a} />
               ))}
             </div>
@@ -132,37 +239,37 @@ const Index = () => {
                 </div>
               </div>
             </div>
-            
+
             <h1 className="text-5xl font-bold text-foreground mb-4 leading-tight">
               亲子教育知识
               <span className="text-primary block">智慧问答</span>
             </h1>
-            
+
             <p className="text-xl text-muted-foreground mb-8 leading-relaxed">
               专为家长打造的趣味答题平台，在游戏中提升亲子教育技能
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
-              <Button 
-                variant="hero" 
+              <Button
+                variant="hero"
                 size="hero"
-                onClick={() => navigate("/quiz")}
+                onClick={() => navigate('/quiz')}
                 className="group"
               >
                 <PlayCircle className="w-6 h-6 group-hover:rotate-12 transition-transform" />
                 开始答题挑战
               </Button>
-              
-              <Button 
-                variant="playful" 
+
+              <Button
+                variant="playful"
                 size="lg"
-                onClick={() => navigate("/history")}
+                onClick={() => navigate('/history')}
               >
                 <History className="w-5 h-5" />
                 查看答题记录
               </Button>
-              
-              {isAuthenticated && (
+
+              {/* {isAuthenticated && isAdmin && (
                 <Button 
                   variant="outline" 
                   size="lg"
@@ -170,35 +277,52 @@ const Index = () => {
                 >
                   管理后台
                 </Button>
-              )}
+              )} */}
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={() => navigate('/admin')}
+              >
+                管理后台
+              </Button>
             </div>
 
             {/* Stats Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
               <Card className="bg-gradient-card shadow-card border-0 hover:shadow-float transition-all">
                 <CardContent className="p-4 text-center">
-                  <div className="text-2xl font-bold text-primary mb-1">{userStats.totalQuizzes}</div>
-                  <div className="text-sm text-muted-foreground">总答题次数</div>
+                  <div className="text-2xl font-bold text-primary mb-1">
+                    {userStats.loading ? '-' : userStats.totalQuizzes}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    总答题次数
+                  </div>
                 </CardContent>
               </Card>
-              
+
               <Card className="bg-gradient-card shadow-card border-0 hover:shadow-float transition-all">
                 <CardContent className="p-4 text-center">
-                  <div className="text-2xl font-bold text-primary mb-1">{userStats.averageScore}</div>
+                  <div className="text-2xl font-bold text-primary mb-1">
+                    {userStats.loading ? '-' : userStats.averageScore}%
+                  </div>
                   <div className="text-sm text-muted-foreground">平均分数</div>
                 </CardContent>
               </Card>
-              
+
               <Card className="bg-gradient-card shadow-card border-0 hover:shadow-float transition-all">
                 <CardContent className="p-4 text-center">
-                  <div className="text-2xl font-bold text-primary mb-1">{userStats.bestScore}</div>
+                  <div className="text-2xl font-bold text-primary mb-1">
+                    {userStats.loading ? '-' : userStats.bestScore}%
+                  </div>
                   <div className="text-sm text-muted-foreground">最高分数</div>
                 </CardContent>
               </Card>
-              
+
               <Card className="bg-gradient-card shadow-card border-0 hover:shadow-float transition-all">
                 <CardContent className="p-4 text-center">
-                  <div className="text-2xl font-bold text-primary mb-1">{userStats.streak}</div>
+                  <div className="text-2xl font-bold text-primary mb-1">
+                    {userStats.loading ? '-' : userStats.streak}
+                  </div>
                   <div className="text-sm text-muted-foreground">连续答题</div>
                 </CardContent>
               </Card>
@@ -210,7 +334,7 @@ const Index = () => {
       {/* Features Section */}
       <div className="container mx-auto px-4 py-16">
         <h2 className="text-3xl font-bold text-center mb-12">平台特色</h2>
-        
+
         <div className="grid md:grid-cols-3 gap-8">
           <Card className="bg-gradient-card shadow-card border-0 hover:shadow-float transition-all group">
             <CardHeader className="text-center">
@@ -255,7 +379,7 @@ const Index = () => {
         <div className="container mx-auto px-4 pb-16">
           <h2 className="text-3xl font-bold text-center mb-12">推荐参考书籍</h2>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {books.map((b) => (
+            {books.map(b => (
               <ReferenceBookCard key={b.id} book={b} />
             ))}
           </div>
@@ -271,10 +395,10 @@ const Index = () => {
           <p className="text-lg text-accent-foreground/80 mb-8">
             每次8道精选题目，只需5分钟，提升你的育儿智慧
           </p>
-          <Button 
-            variant="hero" 
+          <Button
+            variant="hero"
             size="hero"
-            onClick={() => navigate("/quiz")}
+            onClick={() => navigate('/quiz')}
             className="bg-primary hover:bg-primary/90"
           >
             <PlayCircle className="w-6 h-6" />

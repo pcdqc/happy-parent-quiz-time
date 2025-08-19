@@ -25,13 +25,18 @@ const Quiz = () => {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
+    if (showResult) return; // 答题结束后停止计时
+    
     const interval = setInterval(() => {
       setTimer(Math.floor((Date.now() - startTime) / 1000));
     }, 1000);
     return () => clearInterval(interval);
-  }, [startTime]);
+  }, [startTime, showResult]);
 
   const handleAnswerSelect = (answerIndex: number) => {
+    // 如果已经显示了解析，不允许修改答案
+    if (showExplanation) return;
+    
     const newAnswers = [...selectedAnswers];
     newAnswers[currentQuestion] = answerIndex;
     setSelectedAnswers(newAnswers);
@@ -57,6 +62,18 @@ const Quiz = () => {
     if (currentQuestion > 0) {
       setCurrentQuestion(currentQuestion - 1);
       setShowExplanation(false);
+    }
+  };
+
+  // 添加导航保护
+  const handleExitQuiz = () => {
+    if (currentQuestion > 0 && !showResult) {
+      const confirmed = window.confirm('您确定要退出答题吗？您的进度将不会被保存。');
+      if (confirmed) {
+        navigate('/');
+      }
+    } else {
+      navigate('/');
     }
   };
 
@@ -241,6 +258,37 @@ const Quiz = () => {
                   返回首页
                 </Button>
               </div>
+              <div className="flex gap-3 mt-4">
+                <Button 
+                  variant="outline" 
+                  size="lg"
+                  onClick={async () => {
+                    const score = calculateScore();
+                    await saveQuizResult(score, selectedAnswers);
+                    navigate("/history");
+                  }}
+                  className="flex-1"
+                >
+                  保存并分享
+                </Button>
+                <Button 
+                  variant="secondary" 
+                  size="lg"
+                  onClick={async () => {
+                    const score = calculateScore();
+                    await saveQuizResult(score, selectedAnswers);
+                    const url = `${window.location.origin}/happy-parent-quiz-time/share/${user?.id || 'anonymous'}`;
+                    await navigator.clipboard.writeText(url);
+                    toast({
+                      title: "分享链接已复制",
+                      description: "可以将成绩分享给朋友了！",
+                    });
+                  }}
+                  className="flex-1"
+                >
+                  一键分享
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -278,9 +326,25 @@ const Quiz = () => {
         {/* Question Card */}
           <Card className="bg-gradient-card shadow-card border-0 mb-6">
             <CardHeader>
-              <CardTitle className="text-xl leading-relaxed">
-                {question.title}
-              </CardTitle>
+              <div className="flex justify-between items-start">
+                <CardTitle className="text-xl leading-relaxed">
+                  {question.title}
+                </CardTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground hover:text-destructive ml-4"
+                  onClick={() => {
+                    toast({
+                      title: "举报功能",
+                      description: "举报功能即将上线，请稍后再试",
+                    });
+                  }}
+                >
+                  <AlertCircle className="w-4 h-4 mr-1" />
+                  举报
+                </Button>
+              </div>
             </CardHeader>
           
           <CardContent className="space-y-3">
@@ -334,12 +398,12 @@ const Quiz = () => {
         <div className="flex justify-between items-center">
           <Button
             variant="outline"
-            onClick={handlePrevQuestion}
-            disabled={currentQuestion === 0}
+            onClick={currentQuestion === 0 ? handleExitQuiz : handlePrevQuestion}
+            disabled={currentQuestion === 0 && showResult}
             className="flex items-center gap-2"
           >
             <ArrowLeft className="w-4 h-4" />
-            上一题
+            {currentQuestion === 0 ? '退出' : '上一题'}
           </Button>
 
           <div className="flex gap-3">

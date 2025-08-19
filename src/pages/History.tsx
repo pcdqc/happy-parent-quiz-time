@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Trophy, Calendar, Clock, Target, TrendingUp, ArrowLeft, User, CheckCircle, XCircle, Share2 } from "lucide-react";
+import { Trophy, Calendar, Clock, Target, TrendingUp, ArrowLeft, User, CheckCircle, XCircle, Share2, Crown, Medal, Award } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -26,6 +26,8 @@ const History = () => {
   const [selectedRecord, setSelectedRecord] = useState<string | null>(null);
   const [historyData, setHistoryData] = useState<QuizResult[]>([]);
   const [loading, setLoading] = useState(true);
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [leaderboardPeriod, setLeaderboardPeriod] = useState<'week' | 'month' | 'all'>('week');
 
   useEffect(() => {
     if (isAuthenticated && user) {
@@ -83,7 +85,7 @@ const History = () => {
     }
 
     setHistoryData(prev => prev.map(r => r.id === record.id ? { ...r, shareable_name: slug } : r));
-    const url = `${window.location.origin}/share/${slug}`;
+    const url = `${window.location.origin}/happy-parent-quiz-time/share/${slug}`;
     await navigator.clipboard.writeText(url);
     toast({
       title: "已开启分享并复制链接",
@@ -93,7 +95,7 @@ const History = () => {
 
   const copyShare = async (record: QuizResult) => {
     if (!record.shareable_name) return;
-    const url = `${window.location.origin}/share/${record.shareable_name}`;
+    const url = `${window.location.origin}/happy-parent-quiz-time/share/${record.shareable_name}`;
     await navigator.clipboard.writeText(url);
     toast({
       title: "链接已复制",
@@ -123,6 +125,58 @@ const History = () => {
       description: "该记录已不再对外可见",
     });
   };
+
+  const fetchLeaderboard = async (period: 'week' | 'month' | 'all') => {
+    try {
+      let startDate: Date;
+      const now = new Date();
+      
+      switch (period) {
+        case 'week':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'all':
+          startDate = new Date(0);
+          break;
+      }
+
+      const { data, error } = await supabase
+        .from('quiz_results')
+        .select(`
+          *,
+          profiles!inner(username)
+        `)
+        .gte('date', startDate.toISOString())
+        .order('score', { ascending: false })
+        .limit(20);
+
+      if (error) {
+        console.error('获取排行榜失败:', error);
+        setLeaderboard([]);
+        return;
+      }
+
+      // 转换数据结构以匹配UI期望的格式
+      const formattedData = (data || []).map(item => ({
+        ...item,
+        user: { username: (item as any).profiles?.username || '匿名用户' }
+      }));
+
+      setLeaderboard(formattedData);
+    } catch (error: any) {
+      console.error('获取排行榜失败:', error);
+      setLeaderboard([]);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchLeaderboard(leaderboardPeriod);
+    }
+  }, [leaderboardPeriod, isAuthenticated]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -229,9 +283,10 @@ const History = () => {
         </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="overview">概览统计</TabsTrigger>
             <TabsTrigger value="records">详细记录</TabsTrigger>
+            <TabsTrigger value="leaderboard">排行榜</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
@@ -418,11 +473,17 @@ const History = () => {
 
                               <div>
                                 <h4 className="font-medium mb-2">答题详情：</h4>
-                                <div className="space-y-2 max-h-60 overflow-y-auto">
+                                <div className="space-y-3 max-h-60 overflow-y-auto">
                                   {record.answers?.map((answer: any, index: number) => (
-                                    <div key={index} className="text-sm p-3 bg-muted/50 rounded-lg">
-                                      <div className="font-medium mb-1">
+                                    <div key={index} className="text-sm p-4 bg-muted/50 rounded-lg space-y-2">
+                                      <div className="font-medium">
                                         第{index + 1}题: {answer.question}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">
+                                        您的答案: {String.fromCharCode(65 + answer.selected_answer)}
+                                      </div>
+                                      <div className="text-xs text-green-600 font-medium">
+                                        正确答案: {String.fromCharCode(65 + answer.correct_answer)}
                                       </div>
                                       <div className={`flex items-center gap-2 ${answer.is_correct ? 'text-green-600' : 'text-red-600'}`}>
                                         {answer.is_correct ? (
@@ -430,7 +491,10 @@ const History = () => {
                                         ) : (
                                           <XCircle className="w-4 h-4" />
                                         )}
-                                        <span>{answer.is_correct ? '正确' : '错误'}</span>
+                                        <span>{answer.is_correct ? '回答正确' : '回答错误'}</span>
+                                      </div>
+                                      <div className="text-xs text-muted-foreground border-t pt-2">
+                                        <strong>解析：</strong>{answer.explanation}
                                       </div>
                                     </div>
                                   ))}
@@ -462,6 +526,96 @@ const History = () => {
                 >
                   开始新的答题
                 </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="leaderboard" className="space-y-6">
+            <Card className="bg-gradient-card shadow-card border-0">
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Crown className="w-5 h-5" />
+                    排行榜
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      variant={leaderboardPeriod === 'week' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setLeaderboardPeriod('week')}
+                    >
+                      本周
+                    </Button>
+                    <Button
+                      variant={leaderboardPeriod === 'month' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setLeaderboardPeriod('month')}
+                    >
+                      本月
+                    </Button>
+                    <Button
+                      variant={leaderboardPeriod === 'all' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setLeaderboardPeriod('all')}
+                    >
+                      全部
+                    </Button>
+                  </div>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {leaderboard.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Trophy className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
+                    <p className="text-muted-foreground">
+                      暂无{leaderboardPeriod === 'week' ? '本周' : 
+                           leaderboardPeriod === 'month' ? '本月' : '历史'}答题记录
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {leaderboard.map((entry, index) => {
+                      const score = Math.round((entry.score / entry.total_questions) * 100);
+                      const getRankIcon = (rank: number) => {
+                        switch (rank) {
+                          case 0: return <Crown className="w-5 h-5 text-yellow-500" />;
+                          case 1: return <Medal className="w-5 h-5 text-gray-400" />;
+                          case 2: return <Award className="w-5 h-5 text-orange-400" />;
+                          default: return <span className="text-sm font-bold">{rank + 1}</span>;
+                        }
+                      };
+
+                      return (
+                        <Card key={entry.id} className="border">
+                          <CardContent className="p-4">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-4">
+                                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-muted">
+                                  {getRankIcon(index)}
+                                </div>
+                                <div>
+                                  <div className="font-medium">{entry.user?.username || '匿名用户'}</div>
+                                  <div className="text-sm text-muted-foreground">
+                                    {new Date(entry.date).toLocaleDateString('zh-CN', {
+                                      month: 'short',
+                                      day: 'numeric'
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-2xl font-bold text-green-600">{score}%</div>
+                                <div className="text-sm text-muted-foreground">
+                                  {entry.score}/{entry.total_questions}
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

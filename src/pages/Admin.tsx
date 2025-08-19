@@ -22,7 +22,12 @@ import {
   Loader2,
   Upload,
   Eye,
-  EyeOff
+  EyeOff,
+  FileSpreadsheet,
+  Download,
+  Shield,
+  Search,
+  Flag
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -58,11 +63,13 @@ const Admin = () => {
     topic: "",
     difficulty: "medium" as "easy" | "medium" | "hard",
     count: 5,
-    style: "亲子教育"
+    style: "亲子教育",
+    referenceBook: ""
   });
   const [generatedQuestions, setGeneratedQuestions] = useState<any[]>([]);
   const [editingGeneratedQuestion, setEditingGeneratedQuestion] = useState<any>(null);
   const [selectedQuestions, setSelectedQuestions] = useState<Set<number>>(new Set());
+  const [showPromptPreview, setShowPromptPreview] = useState(false);
   
   // Analytics state
   const [analyticsData, setAnalyticsData] = useState<any>(null);
@@ -79,6 +86,28 @@ const Admin = () => {
     source: "",
   });
 
+  // File upload state
+  const [uploading, setUploading] = useState(false);
+  const [excelQuestions, setExcelQuestions] = useState<any[]>([]);
+  const [selectedExcelQuestions, setSelectedExcelQuestions] = useState<Set<number>>(new Set());
+
+  // Content management state
+  const [sensitiveWords, setSensitiveWords] = useState<string[]>([]);
+  const [newSensitiveWord, setNewSensitiveWord] = useState('');
+  const [reportedContent, setReportedContent] = useState<any[]>([]);
+  const [contentTab, setContentTab] = useState<'words' | 'reports'>('words');
+  const [referenceBooks, setReferenceBooks] = useState<any[]>([]);
+  const [showAddBookModal, setShowAddBookModal] = useState(false);
+  const [newBook, setNewBook] = useState({
+    title: '',
+    author: '',
+    edition: '',
+    isbn: '',
+    cover_url: '',
+    description: '',
+    tags: [] as string[]
+  });
+
   useEffect(() => {
     checkAdminStatus();
   }, [user, isAuthenticated]);
@@ -86,6 +115,9 @@ const Admin = () => {
   useEffect(() => {
     if (isAdmin) {
       fetchQuestions();
+      fetchReferenceBooks();
+      fetchSensitiveWords();
+      fetchReports();
     }
   }, [isAdmin]);
 
@@ -237,6 +269,305 @@ const Admin = () => {
     setShowAddForm(false);
   };
 
+  // Excel import functions
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      // 使用Supabase Edge Function处理Excel文件
+      const { data, error } = await supabase.functions.invoke('import-excel-questions', {
+        body: { file: await file.arrayBuffer(), filename: file.name }
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        setExcelQuestions(data.questions);
+        setSelectedExcelQuestions(new Set(data.questions.map((_: any, index: number) => index)));
+        toast({
+          title: "文件解析成功",
+          description: `成功解析 ${data.questions.length} 道题目`,
+        });
+      } else {
+        throw new Error(data.error || '文件解析失败');
+      }
+    } catch (error: any) {
+      console.error('Excel导入错误:', error);
+      toast({
+        title: "导入失败",
+        description: error.message || "Excel文件解析失败，请检查文件格式",
+        variant: "destructive",
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleBatchImportFromExcel = async () => {
+    const questionsToImport = excelQuestions
+      .filter((_, index) => selectedExcelQuestions.has(index))
+      .map(q => ({
+        title: q.title,
+        options: q.options,
+        correct_answer: q.correct_answer,
+        explanation: q.explanation,
+        topic: q.topic,
+        difficulty: q.difficulty,
+        source: q.source,
+        is_active: true
+      }));
+
+    if (questionsToImport.length === 0) {
+      toast({
+        title: "请选择题目",
+        description: "请至少选择一道题目进行导入",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('questions')
+        .insert(questionsToImport);
+
+      if (error) throw error;
+
+      toast({
+        title: "导入成功",
+        description: `成功导入 ${questionsToImport.length} 道题目`,
+      });
+
+      setExcelQuestions([]);
+      setSelectedExcelQuestions(new Set());
+      fetchQuestions();
+    } catch (error: any) {
+      console.error('批量导入错误:', error);
+      toast({
+        title: "导入失败",
+        description: error.message || "批量导入过程中出现错误",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDownloadTemplate = () => {
+    const template = [
+      ['题目内容', '选项A', '选项B', '选项C', '选项D', '正确答案', '题目解析', '主题', '难度', '来源'],
+      ['当孩子发脾气时，家长应该怎么做？', '立即严厉批评', '耐心倾听并引导表达', '转移注意力', '不予理睬', 1, '当孩子情绪激动时，家长应该保持冷静，耐心倾听孩子的感受，引导他们用语言表达情绪，而不是压制或忽视。', '情绪管理', 'medium', '《正面管教》'],
+      ['如何培养孩子的阅读习惯？', '每天强制阅读1小时', '以身作则，每天亲子共读', '用电子产品代替书籍', '只在周末阅读', 1, '家长通过自身示范和每天固定的亲子阅读时间，能够更好地培养孩子的阅读兴趣和习惯。', '学习习惯', 'easy', '《父母的语言》']
+    ];
+
+    const csvContent = template.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = '题目导入模板.csv';
+    link.click();
+  };
+
+  const toggleExcelQuestionSelection = (index: number) => {
+    setSelectedExcelQuestions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(index)) {
+        newSet.delete(index);
+      } else {
+        newSet.add(index);
+      }
+      return newSet;
+    });
+  };
+
+  // Content management functions
+  const fetchReferenceBooks = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('reference_books')
+        .select('*')
+        .eq('is_active', true)
+        .order('title', { ascending: true });
+
+      if (error) throw error;
+      setReferenceBooks(data || []);
+    } catch (error: any) {
+      console.error('获取参考书籍失败:', error);
+      setReferenceBooks([]);
+    }
+  };
+
+  const fetchSensitiveWords = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('settings')
+        .select('value')
+        .eq('key', 'sensitive_words')
+        .single();
+
+      if (error) throw error;
+      
+      const words = data?.value ? JSON.parse(data.value) : [];
+      setSensitiveWords(Array.isArray(words) ? words : []);
+    } catch (error: any) {
+      console.error('获取敏感词失败:', error);
+      setSensitiveWords([]);
+    }
+  };
+
+  const addSensitiveWord = async () => {
+    if (!newSensitiveWord.trim()) return;
+
+    try {
+      const updatedWords = [...new Set([...sensitiveWords, newSensitiveWord.trim()])];
+      
+      const { error } = await supabase
+        .from('settings')
+        .upsert({ 
+          key: 'sensitive_words', 
+          value: JSON.stringify(updatedWords),
+          updated_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+
+      setSensitiveWords(updatedWords);
+      setNewSensitiveWord('');
+      toast({
+        title: "添加成功",
+        description: `已添加敏感词: ${newSensitiveWord.trim()}`,
+      });
+    } catch (error: any) {
+      console.error('添加敏感词失败:', error);
+      toast({
+        title: "添加失败",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const fetchReports = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('reports')
+        .select(`
+          *,
+          question:questions(title),
+          reporter:profiles!reporter_id(username)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setReportedContent(data || []);
+    } catch (error: any) {
+      console.error('获取举报内容失败:', error);
+      setReportedContent([]);
+    }
+  };
+
+  const removeSensitiveWord = async (word: string) => {
+    try {
+      const updatedWords = sensitiveWords.filter(w => w !== word);
+      
+      const { error } = await supabase
+        .from('settings')
+        .update({ 
+          value: JSON.stringify(updatedWords),
+          updated_at: new Date().toISOString()
+        })
+        .eq('key', 'sensitive_words');
+
+      if (error) throw error;
+
+      setSensitiveWords(updatedWords);
+      toast({
+        title: "删除成功",
+        description: `已删除敏感词: ${word}`,
+      });
+    } catch (error: any) {
+      console.error('删除敏感词失败:', error);
+      toast({
+        title: "删除失败",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const fetchReportedContent = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('reports')
+        .select(`
+          *,
+          question:questions(id, title),
+          reporter:profiles(username)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setReportedContent((data || []) as any[]);
+    } catch (error: any) {
+      console.error('获取举报内容失败:', error);
+      toast({
+        title: "获取失败",
+        description: "无法加载举报内容",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleReportAction = async (reportId: string, action: 'approve' | 'reject', questionId?: string) => {
+    try {
+      if (action === 'approve' && questionId) {
+        // 禁用问题
+        const { error: questionError } = await supabase
+          .from('questions')
+          .update({ is_active: false })
+          .eq('id', questionId);
+
+        if (questionError) throw questionError;
+      }
+
+      // 更新举报状态
+      const { error: reportError } = await supabase
+        .from('reports')
+        .update({ 
+          status: action === 'approve' ? 'resolved' : 'rejected',
+          resolved_at: new Date().toISOString()
+        })
+        .eq('id', reportId);
+
+      if (reportError) throw reportError;
+
+      toast({
+        title: "处理成功",
+        description: action === 'approve' ? "已禁用问题并标记为已解决" : "已拒绝举报",
+      });
+
+      fetchReportedContent();
+      fetchQuestions();
+    } catch (error: any) {
+      console.error('处理举报失败:', error);
+      toast({
+        title: "处理失败",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin) {
+      fetchSensitiveWords();
+      fetchReportedContent();
+    }
+  }, [isAdmin]);
+
   const toggleQuestionStatus = async (id: string, currentStatus: boolean) => {
     try {
       const { error } = await supabase
@@ -262,6 +593,37 @@ const Admin = () => {
   };
 
   // AI Generation functions
+  const generatePromptPreview = () => {
+    const referenceBookTitle = referenceBooks.find(book => book.id === aiFormData.referenceBook)?.title || '不指定参考书籍';
+    
+    return `请根据以下要求生成 ${aiFormData.count} 道亲子教育相关的选择题：
+
+**主题**：${aiFormData.topic || '综合亲子教育知识'}
+**难度**：${aiFormData.difficulty === 'easy' ? '简单' : aiFormData.difficulty === 'medium' ? '中等' : '困难'}
+**风格**：${aiFormData.style}
+**参考书籍**：${referenceBookTitle}
+
+**要求**：
+1. 每道题包含1个题干和4个选项（A、B、C、D）
+2. 明确标注正确答案
+3. 提供详细的题目解析和学习要点
+4. 解析应结合权威育儿理论和实践经验
+5. 题目内容要贴近实际育儿场景，具有实用性
+6. 语言简洁明了，适合家长阅读理解
+
+**输出格式**：
+每道题包含：
+- title: 题目内容
+- options: 四个选项数组
+- correct_answer: 正确答案索引（0-3）
+- explanation: 详细解析
+- topic: 主题分类
+- difficulty: 难度等级
+- source: 参考来源
+
+请确保生成的题目质量高，内容专业，能够帮助家长提升育儿知识和技能。`;
+  };
+
   const handleAiGenerate = async () => {
     if (!aiFormData.topic.trim()) {
       toast({
@@ -279,7 +641,8 @@ const Admin = () => {
           topic: aiFormData.topic,
           difficulty: aiFormData.difficulty,
           count: aiFormData.count,
-          style: aiFormData.style
+          style: aiFormData.style,
+          referenceBookId: aiFormData.referenceBook || undefined
         }
       });
 
@@ -609,7 +972,7 @@ const Admin = () => {
         </div>
 
         <Tabs defaultValue="questions" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="questions" className="flex items-center gap-2">
               <BookOpen className="w-4 h-4" />
               题目管理
@@ -621,6 +984,10 @@ const Admin = () => {
             <TabsTrigger value="analytics" className="flex items-center gap-2">
               <BarChart3 className="w-4 h-4" />
               数据分析
+            </TabsTrigger>
+            <TabsTrigger value="content" className="flex items-center gap-2">
+              <Shield className="w-4 h-4" />
+              内容管理
             </TabsTrigger>
           </TabsList>
 
@@ -752,10 +1119,36 @@ const Admin = () => {
             {/* Questions List */}
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">题目列表 ({questions.length})</h2>
-              <Button onClick={() => setShowAddForm(true)} disabled={showAddForm}>
-                <Plus className="w-4 h-4 mr-2" />
-                添加题目
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={handleDownloadTemplate}>
+                  <Download className="w-4 h-4 mr-2" />
+                  下载模板
+                </Button>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  id="excel-upload"
+                  disabled={uploading}
+                />
+                <Button 
+                  variant="outline" 
+                  onClick={() => document.getElementById('excel-upload')?.click()}
+                  disabled={uploading}
+                >
+                  {uploading ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  )}
+                  {uploading ? '上传中...' : 'Excel导入'}
+                </Button>
+                <Button onClick={() => setShowAddForm(true)} disabled={showAddForm}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  添加题目
+                </Button>
+              </div>
             </div>
 
             <div className="space-y-4">
@@ -811,18 +1204,120 @@ const Admin = () => {
                 </Card>
               ))}
 
-              {questions.length === 0 && (
+              {excelQuestions.length > 0 && (
+                <div className="space-y-4">
+                  <Card className="bg-gradient-card shadow-card border-0">
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="flex items-center gap-2">
+                          <FileSpreadsheet className="w-5 h-5" />
+                          Excel导入预览 ({excelQuestions.length})
+                        </CardTitle>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-muted-foreground">
+                            已选择 {selectedExcelQuestions.size} 道题目
+                          </span>
+                          <Button 
+                            onClick={handleBatchImportFromExcel}
+                            disabled={selectedExcelQuestions.size === 0}
+                            size="sm"
+                          >
+                            <Upload className="w-4 h-4 mr-2" />
+                            批量导入 ({selectedExcelQuestions.size})
+                          </Button>
+                          <Button 
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setExcelQuestions([]);
+                              setSelectedExcelQuestions(new Set());
+                            }}
+                          >
+                            取消
+                          </Button>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {excelQuestions.map((question, index) => (
+                        <Card key={index} className="border">
+                          <CardHeader className="pb-3">
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedExcelQuestions.has(index)}
+                                  onChange={() => toggleExcelQuestionSelection(index)}
+                                  className="w-4 h-4 rounded border-gray-300"
+                                />
+                                <span className="text-sm text-muted-foreground">题目 {index + 1}</span>
+                                <Badge variant="outline">{question.topic}</Badge>
+                                <Badge variant="secondary">{question.difficulty}</Badge>
+                              </div>
+                            </div>
+                            <CardTitle className="text-base mt-2">{question.title}</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="space-y-2">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                {question.options.map((option: string, optIndex: number) => (
+                                  <div key={optIndex} className="flex items-center gap-2">
+                                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-sm font-bold ${
+                                      optIndex === question.correct_answer 
+                                        ? 'bg-green-100 text-green-700 border-2 border-green-300' 
+                                        : 'bg-gray-100 text-gray-600'
+                                    }`}>
+                                      {String.fromCharCode(65 + optIndex)}
+                                    </span>
+                                    <span className={`text-sm ${optIndex === question.correct_answer ? 'font-medium text-green-700' : ''}`}>
+                                      {option}
+                                    </span>
+                                    {optIndex === question.correct_answer && (
+                                      <CheckCircle className="w-4 h-4 text-green-600" />
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="border-t pt-2">
+                                <div className="text-sm">
+                                  <span className="font-medium text-muted-foreground">解析：</span>
+                                  <span className="text-muted-foreground">{question.explanation}</span>
+                                </div>
+                                <div className="text-sm mt-1">
+                                  <span className="font-medium text-muted-foreground">来源：</span>
+                                  <span className="text-muted-foreground">{question.source}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {questions.length === 0 && excelQuestions.length === 0 && (
                 <Card className="bg-gradient-card shadow-card border-0 text-center">
                   <CardContent className="p-8">
                     <BookOpen className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
                     <h3 className="text-xl font-bold mb-2">暂无题目</h3>
                     <p className="text-muted-foreground mb-6">
-                      开始添加第一道题目来建立题库
+                      可以通过以下方式添加题目：
                     </p>
-                    <Button onClick={() => setShowAddForm(true)}>
-                      <Plus className="w-4 h-4 mr-2" />
-                      添加题目
-                    </Button>
+                    <div className="flex gap-2 justify-center">
+                      <Button onClick={() => setShowAddForm(true)}>
+                        <Plus className="w-4 h-4 mr-2" />
+                        手动添加
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        onClick={() => document.getElementById('excel-upload')?.click()}
+                      >
+                        <FileSpreadsheet className="w-4 h-4 mr-2" />
+                        Excel导入
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               )}
@@ -870,59 +1365,168 @@ const Admin = () => {
                   
                   <div className="space-y-2">
                     <Label htmlFor="ai-count">生成数量</Label>
-                    <Select
-                      value={aiFormData.count.toString()}
-                      onValueChange={(value) => setAiFormData({ ...aiFormData, count: parseInt(value) })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="3">3道题</SelectItem>
-                        <SelectItem value="5">5道题</SelectItem>
-                        <SelectItem value="10">10道题</SelectItem>
-                        <SelectItem value="15">15道题</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex gap-2">
+                      <Select
+                        value={aiFormData.count.toString()}
+                        onValueChange={(value) => setAiFormData({ ...aiFormData, count: parseInt(value) })}
+                      >
+                        <SelectTrigger className="flex-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="1">1道题</SelectItem>
+                          <SelectItem value="2">2道题</SelectItem>
+                          <SelectItem value="3">3道题</SelectItem>
+                          <SelectItem value="4">4道题</SelectItem>
+                          <SelectItem value="5">5道题</SelectItem>
+                          <SelectItem value="6">6道题</SelectItem>
+                          <SelectItem value="7">7道题</SelectItem>
+                          <SelectItem value="8">8道题</SelectItem>
+                          <SelectItem value="9">9道题</SelectItem>
+                          <SelectItem value="10">10道题</SelectItem>
+                          <SelectItem value="12">12道题</SelectItem>
+                          <SelectItem value="15">15道题</SelectItem>
+                          <SelectItem value="20">20道题</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        type="number"
+                        placeholder="或输入数量"
+                        min="1"
+                        max="50"
+                        value={aiFormData.count || ''}
+                        onChange={(e) => {
+                          const num = parseInt(e.target.value);
+                          if (!isNaN(num) && num > 0 && num <= 50) {
+                            setAiFormData({ ...aiFormData, count: num });
+                          }
+                        }}
+                        className="w-24"
+                      />
+                    </div>
                   </div>
                   
                   <div className="space-y-2">
                     <Label htmlFor="ai-style">生成风格</Label>
+                    <div className="flex gap-2">
+                      <Select
+                        value={aiFormData.style}
+                        onValueChange={(value) => setAiFormData({ ...aiFormData, style: value })}
+                      >
+                        <SelectTrigger className="flex-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="亲子教育">亲子教育</SelectItem>
+                          <SelectItem value="学前教育">学前教育</SelectItem>
+                          <SelectItem value="青少年心理">青少年心理</SelectItem>
+                          <SelectItem value="家庭教育">家庭教育</SelectItem>
+                          <SelectItem value="情绪管理">情绪管理</SelectItem>
+                          <SelectItem value="学习习惯">学习习惯</SelectItem>
+                          <SelectItem value="沟通技巧">沟通技巧</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        placeholder="或输入自定义风格"
+                        value={["亲子教育", "学前教育", "青少年心理", "家庭教育", "情绪管理", "学习习惯", "沟通技巧"].includes(aiFormData.style) ? '' : aiFormData.style}
+                        onChange={(e) => {
+                          const value = e.target.value.trim();
+                          if (value) {
+                            setAiFormData({ ...aiFormData, style: value });
+                          }
+                        }}
+                        className="flex-1"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="ai-reference">参考书籍（可选）</Label>
                     <Select
-                      value={aiFormData.style}
-                      onValueChange={(value) => setAiFormData({ ...aiFormData, style: value })}
+                      value={aiFormData.referenceBook || undefined}
+                      onValueChange={(value) => setAiFormData({ ...aiFormData, referenceBook: value === 'none' ? '' : value })}
                     >
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue placeholder="选择参考书籍" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="亲子教育">亲子教育</SelectItem>
-                        <SelectItem value="学前教育">学前教育</SelectItem>
-                        <SelectItem value="青少年心理">青少年心理</SelectItem>
-                        <SelectItem value="家庭教育">家庭教育</SelectItem>
+                        <SelectItem value="none">不指定参考书籍</SelectItem>
+                        {referenceBooks.map((book) => (
+                          <SelectItem key={book.id} value={book.id}>
+                            {book.title}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
 
-                <div className="text-center">
-                  <Button 
-                    onClick={handleAiGenerate} 
-                    disabled={aiGenerating || !aiFormData.topic.trim()}
-                    size="lg"
-                  >
-                    {aiGenerating ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        AI生成中...
-                      </>
-                    ) : (
-                      <>
-                        <Brain className="w-4 h-4 mr-2" />
-                        开始AI生成
-                      </>
-                    )}
-                  </Button>
+                <div className="space-y-4">
+                  <div className="flex justify-center gap-3">
+                    <Button 
+                      variant="outline"
+                      onClick={() => setShowPromptPreview(!showPromptPreview)}
+                      className="flex items-center gap-2"
+                    >
+                      <Brain className="w-4 h-4" />
+                      {showPromptPreview ? '隐藏' : '查看'}提示词
+                    </Button>
+                    <Button 
+                      onClick={handleAiGenerate} 
+                      disabled={aiGenerating || !aiFormData.topic.trim()}
+                      size="lg"
+                    >
+                      {aiGenerating ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          AI生成中...
+                        </>
+                      ) : (
+                        <>
+                          <Brain className="w-4 h-4 mr-2" />
+                          开始AI生成
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  {showPromptPreview && (
+                    <Card className="bg-gradient-card shadow-card border-0">
+                      <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2">
+                          <Brain className="w-5 h-5" />
+                          提示词预览
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-3">
+                          <div className="text-sm text-muted-foreground mb-2">
+                            这是将发送给AI大模型的完整提示词：
+                          </div>
+                          <pre className="bg-muted p-4 rounded-lg text-sm whitespace-pre-wrap max-h-96 overflow-y-auto"
+                            style={{ fontFamily: 'monospace' }}
+                          >
+                            {generatePromptPreview()}
+                          </pre>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                navigator.clipboard.writeText(generatePromptPreview());
+                                toast({
+                                  title: "已复制",
+                                  description: "提示词已复制到剪贴板",
+                                });
+                              }}
+                            >
+                              复制提示词
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
                 </div>
 
                 <Alert>
@@ -1391,6 +1995,134 @@ const Admin = () => {
                 </CardContent>
               </Card>
             )}
+          </TabsContent>
+
+          <TabsContent value="content" className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* 敏感词管理 */}
+              <Card className="bg-gradient-card shadow-card border-0">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Shield className="w-5 h-5" />
+                    敏感词管理
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="输入敏感词..."
+                      value={newSensitiveWord}
+                      onChange={(e) => setNewSensitiveWord(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && addSensitiveWord()}
+                    />
+                    <Button onClick={addSensitiveWord} disabled={!newSensitiveWord.trim()}>
+                      添加
+                    </Button>
+                  </div>
+                  
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {sensitiveWords.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">
+                        暂无敏感词
+                      </p>
+                    ) : (
+                      sensitiveWords.map((word) => (
+                        <div key={word} className="flex items-center justify-between p-2 border rounded-lg">
+                          <span className="font-mono text-sm">{word}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeSensitiveWord(word)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 举报内容管理 */}
+              <Card className="bg-gradient-card shadow-card border-0">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Flag className="w-5 h-5" />
+                    举报管理
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {reportedContent.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">
+                        暂无举报内容
+                      </p>
+                    ) : (
+                      reportedContent.map((report) => (
+                        <Card key={report.id} className="border">
+                          <CardHeader className="pb-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Badge 
+                                  variant={
+                                    (report as any).status === 'pending' ? 'secondary' :
+                                    (report as any).status === 'resolved' ? 'default' : 'destructive'
+                                  }
+                                >
+                                  {(report as any).status === 'pending' ? '待处理' :
+                                   (report as any).status === 'resolved' ? '已解决' : '已拒绝'}
+                                </Badge>
+                                <span className="text-sm text-muted-foreground">
+                                  举报者: {(report as any).reporter?.username || '匿名'}
+                                </span>
+                              </div>
+                              <span className="text-sm text-muted-foreground">
+                                {new Date((report as any).created_at).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="space-y-2">
+                              <div>
+                                <span className="font-medium">问题: </span>
+                                <span className="text-muted-foreground">{(report as any).question?.title || '问题已删除'}</span>
+                              </div>
+                              <div>
+                                <span className="font-medium">原因: </span>
+                                <span className="text-muted-foreground">{(report as any).reason}</span>
+                              </div>
+                              {(report as any).description && (
+                                <div>
+                                  <span className="font-medium">描述: </span>
+                                  <span className="text-muted-foreground">{(report as any).description}</span>
+                                </div>
+                              )}
+                              <div className="flex gap-2 pt-2">
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleReportAction(report.id, 'approve', (report as any).question_id)}
+                                  disabled={(report as any).status !== 'pending'}
+                                >
+                                  通过举报
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleReportAction(report.id, 'reject')}
+                                  disabled={(report as any).status !== 'pending'}
+                                >
+                                  拒绝举报
+                                </Button>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
         </Tabs>
       </div>
